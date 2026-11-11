@@ -12,6 +12,12 @@ usage:
   xmctl anc <MAC> off|nc|ambient [options]     set noise control, then read it back
       --level N      ambient level (ambient mode)
       --voice        focus on voice (ambient mode)
+  xmctl eq <MAC> <preset-id>                   pick an EQ preset (ids are listed by `status`)
+  xmctl eqbands <MAC> v1,v2,…                  set all EQ bands (switches to Custom)
+  xmctl control <MAC> <key> <action>           touch control (ids are listed by `status`)
+  xmctl dsee <MAC> on|off                      DSEE upscaling
+  xmctl stc <MAC> on|off                       Speak-to-Chat
+  xmctl autooff <MAC> <minutes>                auto power-off (0 = never)
 
 options:
   --v1 | --v2        force protocol (default: try V2, then V1)
@@ -90,20 +96,7 @@ func printStatus(_ s: Session) {
 
     printNoiseControl(s)
 
-    var eq = MDREqualizer()
-    if mdrHeadphonesGetEqualizer(dev, MDRPropertyType(MDR_PROPERTY_CURRENT), &eq) == OK,
-       eq.available == MDRBoolean(MDR_TRUE) {
-        var bands = [Int32](repeating: 0, count: 16)
-        var n = UInt32(bands.count)
-        let shown = Int(min(n, eq.band_count > 0 ? eq.band_count : n))
-        let bandText = mdrHeadphonesGetEqualizerBands(dev, MDRPropertyType(MDR_PROPERTY_CURRENT), &bands, &n) == OK
-            ? bands.prefix(shown).map(String.init).joined(separator: " ") : "?"
-        print("equalizer:     \(describe(eqPreset: eq.preset)), clear bass \(eq.clear_bass), "
-            + "\(eq.band_count) bands [\(bandText)]")
-        if eq.dsee_available == MDRBoolean(MDR_TRUE) {
-            print("DSEE:          \(eq.dsee_enabled == MDRBoolean(MDR_TRUE) ? "on" : "off")")
-        }
-    }
+    printSettings(dev)
 
     let features: [(MDRFeature, String)] = [
         (MDRFeature(MDR_FEATURE_NOISE_CANCELLING), "noise cancelling"),
@@ -120,6 +113,59 @@ func printStatus(_ s: Session) {
         (MDRFeature(MDR_FEATURE_VOICE_GUIDANCE), "voice guidance"),
     ]
     print("features:      " + features.filter { s.feature($0.0) }.map(\.1).joined(separator: ", "))
+}
+
+func printSettings(_ dev: OpaquePointer, _ type: MDRPropertyType = PROPERTY_CURRENT) {
+    if let eq = readEqualizer(dev, type) {
+        let name = eq.presets.first { $0.id == eq.preset }?.name ?? describe(eqPreset: eq.preset)
+        print("equalizer:     \(name) (\(eq.preset))")
+        let bands = zip(eq.bandFrequencies, eq.bands).map { "\(formatFrequency($0)):\($1)" }
+        print("  bands:       [\(bands.joined(separator: " "))]  range \(eq.bandRange)")
+        if let cb = eq.clearBass, let r = eq.clearBassRange { print("  clear bass:  \(cb)  range \(r)") }
+        print("  presets:     " + eq.presets.map { "\($0.name)(\($0.id))" }.joined(separator: ", "))
+        if eq.dseeAvailable { print("DSEE:          \(eq.dseeEnabled ? "on" : "off")") }
+    }
+    if let stc = readSpeakToChat(dev, type) {
+        print("speak-to-chat: \(stc.enabled == MDR_YES ? "on" : "off"), sensitivity "
+            + "\(describe(speechSensitivity: stc.sensitivity)), ends after \(describe(speakTimeout: stc.timeout))")
+    }
+    if let l = readListening(dev, type) {
+        print("listening:     \(describe(listeningMode: l.mode)); available: "
+            + l.available.map { describe(listeningMode: $0) }.joined(separator: ", "))
+    }
+    for c in readControls(dev, type) {
+        print("control:       \(describe(keyLocation: c.location, type: c.keyType)) → "
+            + "\(describe(assignableAction: c.action)) (\(c.action)); options: "
+            + c.options.map { "\(describe(assignableAction: $0))(\($0))" }.joined(separator: ", "))
+    }
+    if let p = readPower(dev, type) {
+        print("auto off:      \(describe(autoOffMinutes: p.minutes)); options: "
+            + p.options.map { describe(autoOffMinutes: $0) }.joined(separator: ", ")
+            + "; wearing power \(p.raw.wearing_power), auto pause "
+            + (p.autoPauseAvailable ? (p.raw.auto_pause == MDR_YES ? "on" : "off") : "n/a"))
+    }
+}
+
+/// Connects, applies `change` (staging writes), commits, and prints settings before and after.
+func applySetting(_ change: (OpaquePointer) throws -> Void) {
+    let s = openSession(address: requireAddress())
+    guard let dev = s.device else { fail("no device") }
+    print("— before"); printSettings(dev)
+    do {
+        try change(dev)
+        try s.commit()
+        try s.drain(1.5)
+    } catch { fail("\(error)") }
+    print("— after"); printSettings(dev)
+}
+
+func argument(_ i: Int, _ what: String) -> String {
+    guard args.count > i else { fail("missing \(what)\n\n\(usage)") }
+    return args[i]
+}
+
+func parseOnOff(_ s: String) -> MDRBoolean {
+    switch s { case "on": return MDR_YES; case "off": return MDR_NO; default: fail("expected on or off") }
 }
 
 // MARK: Commands
@@ -192,6 +238,53 @@ case "anc":
         try s.drain(1.0) // device reports the new state after ACKing the write
     } catch { fail("\(error)") }
     print("after  → ", terminator: ""); printNoiseControl(s)
+
+case "eq":
+    let preset = argument(2, "preset id (see `status`)")
+    guard let id = UInt32(preset) else { fail("preset must be a number from the presets list") }
+    applySetting { try check(mdrHeadphonesSetEqualizerPreset($0, MDREqualizerPreset(id)), "SetEqualizerPreset") }
+
+case "output":
+    // Read-only: which CoreAudio output belongs to each connected headset, and which is the default.
+    let defaultID = AudioOutput.defaultOutputID
+    for d in pairedDevices() where d.isConnected {
+        if let out = AudioOutput.device(forBluetoothAddress: d.address, name: d.name) {
+            print("\(d.name): output \"\(out.name)\" uid \(out.uid)\(out.id == defaultID ? "  ← Mac sound output" : "")")
+        } else {
+            print("\(d.name): no CoreAudio output device")
+        }
+    }
+
+case "eqbands":
+    let list = argument(2, "comma-separated band values")
+    let values = list.split(separator: ",").compactMap { Int($0.trimmingCharacters(in: .whitespaces)) }
+    guard !values.isEmpty else { fail("bands look like 0,1,-2,…") }
+    applySetting { try stageEqualizerBands($0, values) }
+
+case "control":
+    guard let location = UInt32(argument(2, "key location (1 = left, 2 = right)")),
+          let action = UInt32(argument(3, "action id (listed by `status`)")) else { fail("expected numbers") }
+    applySetting { try stageControl($0, location: location, action: action) }
+
+case "dsee":
+    let on = parseOnOff(argument(2, "on|off"))
+    applySetting { try check(mdrHeadphonesSetDSEE($0, on), "SetDSEE") }
+
+case "stc":
+    let on = parseOnOff(argument(2, "on|off"))
+    applySetting { dev in
+        guard var stc = readSpeakToChat(dev, PROPERTY_DESIRED) else { throw XMError("no speak-to-chat") }
+        stc.enabled = on
+        try check(mdrHeadphonesSetSpeakToChat(dev, &stc), "SetSpeakToChat")
+    }
+
+case "autooff":
+    guard let minutes = UInt32(argument(2, "minutes (0 = never)")) else { fail("minutes must be a number") }
+    applySetting { dev in
+        guard var p = readPower(dev, PROPERTY_DESIRED)?.raw else { throw XMError("no power settings") }
+        p.auto_power_off_minutes = minutes
+        try check(mdrHeadphonesSetPower(dev, &p), "SetPower")
+    }
 
 default:
     print(usage)

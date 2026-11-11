@@ -63,6 +63,28 @@ final class HeadphonesController: NSObject, ObservableObject {
     @Published private(set) var ambientRange: ClosedRange<Int> = 0...20
     @Published private(set) var supportsAdaptiveAmbient = false
 
+    // Phase 3: settings stored on the headphones (nil / empty when unsupported).
+    @Published private(set) var equalizer: EqualizerInfo?
+    @Published private(set) var speakToChat: SpeakToChatState?
+    @Published private(set) var controls: [ControlInfo] = []
+    @Published private(set) var power: PowerInfo?
+    @Published private(set) var listening: ListeningInfo?
+
+    // Phase 4: Mac integration.
+    @Published private(set) var isSoundOutput = false
+    @Published private(set) var bluetoothConnecting = false
+    /// Transient message for the panel (a rejected write, a failed switch, …).
+    @Published var notice: String?
+    let prefs = Preferences()
+    private var batteryTracker = LowBatteryTracker()
+    private var pendingOutputSwitch = false
+
+    struct SpeakToChatState: Equatable {
+        var enabled: Bool
+        var sensitivity: MDRSpeechSensitivity
+        var timeout: MDRSpeakTimeout
+    }
+
     var selectedDevice: PairedDevice? { devices.first { $0.address == selectedAddress } }
 
     /// Lowest earbud/headphone level, for the menu bar title (the case doesn't count).
@@ -193,6 +215,12 @@ final class HeadphonesController: NSObject, ObservableObject {
         modelName = nil
         firmware = nil
         availableModes = []
+        equalizer = nil
+        speakToChat = nil
+        controls = []
+        power = nil
+        listening = nil
+        batteryTracker.reset()
         phase = next
     }
 
@@ -257,13 +285,23 @@ final class HeadphonesController: NSObject, ObservableObject {
             readIdentity(device)
             readCapabilities(device)
             readNoise(device)
+            readSettings(device)
             needSync = true // battery levels only arrive via sync; reading them now would show 0%
+            didBecomeReady()
         case MDREvent(MDR_EVENT_IDENTITY_CHANGED):
             readIdentity(device)
         case MDREvent(MDR_EVENT_BATTERY_CHANGED), MDREvent(MDR_EVENT_SYNC_COMPLETE):
             readBatteries(device)
-        case MDREvent(MDR_EVENT_NOISE_CONTROL_CHANGED), MDREvent(MDR_EVENT_APPLY_COMPLETE):
+        case MDREvent(MDR_EVENT_NOISE_CONTROL_CHANGED):
             readNoise(device)
+        case MDREvent(MDR_EVENT_APPLY_COMPLETE):
+            readNoise(device)
+            readSettings(device)
+            verifyPendingControl()
+        case MDREvent(MDR_EVENT_EQUALIZER_CHANGED), MDREvent(MDR_EVENT_SPEAK_TO_CHAT_CHANGED),
+             MDREvent(MDR_EVENT_ASSIGNABLE_CONTROLS_CHANGED), MDREvent(MDR_EVENT_POWER_CHANGED),
+             MDREvent(MDR_EVENT_LISTENING_MODE_CHANGED):
+            readSettings(device)
         case MDREvent(MDR_EVENT_NEED_SYNC):
             needSync = true
         default:
@@ -299,6 +337,25 @@ final class HeadphonesController: NSObject, ObservableObject {
                     percent: Int($0.level_percent),
                     charging: $0.charging == MDRChargingState(MDR_CHARGING_YES))
         }
+        batteryTracker.update(batteries, threshold: prefs.lowBatteryThreshold,
+                              device: modelName ?? selectedDevice?.name ?? "Headphones",
+                              enabled: prefs.lowBatteryAlerts)
+    }
+
+    /// Staged values while writes are in flight, the device's values otherwise (see `readNoise`).
+    private func viewType(_ device: OpaquePointer) -> MDRPropertyType {
+        mdrHeadphonesIsDirty(device) == MDR_YES ? PROPERTY_DESIRED : PROPERTY_CURRENT
+    }
+
+    private func readSettings(_ device: OpaquePointer) {
+        let type = viewType(device)
+        equalizer = readEqualizer(device, type)
+        speakToChat = readSpeakToChat(device, type).map {
+            SpeakToChatState(enabled: $0.enabled == MDR_YES, sensitivity: $0.sensitivity, timeout: $0.timeout)
+        }
+        controls = readControls(device, type)
+        power = readPower(device, type)
+        listening = readListening(device, type)
     }
 
     /// Shows the staged (DESIRED) values while a write is in flight, the device's (CURRENT) otherwise,
@@ -352,22 +409,206 @@ final class HeadphonesController: NSObject, ObservableObject {
         updateNoise { $0.adaptive_ambient = on ? MDR_YES : MDR_NO }
     }
 
+    // MARK: Phase 3 writes
+
+    /// Runs a staging write; the event loop commits it once the device is ready.
+    private func stage(_ body: (OpaquePointer) throws -> Void) {
+        guard phase == .ready, let device else { return }
+        do {
+            try body(device)
+            notice = nil
+        } catch {
+            notice = "The headphones didn't accept that: \(error)"
+        }
+        readSettings(device)
+    }
+
+    func setEqualizerPreset(_ preset: MDREqualizerPreset) {
+        stage { try check(mdrHeadphonesSetEqualizerPreset($0, preset), "SetEqualizerPreset") }
+    }
+
+    func setEqualizerBand(_ index: Int, to value: Int) {
+        stage { device in
+            guard var bands = readEqualizer(device, PROPERTY_DESIRED)?.bands, bands.indices.contains(index) else {
+                return
+            }
+            bands[index] = value
+            try stageEqualizerBands(device, bands)
+        }
+    }
+
+    func resetEqualizerBands() {
+        stage { device in
+            guard let n = readEqualizer(device, PROPERTY_DESIRED)?.bands.count else { return }
+            try stageEqualizerBands(device, Array(repeating: 0, count: n))
+        }
+    }
+
+    func setClearBass(_ value: Int) {
+        stage { try check(mdrHeadphonesSetEqualizerClearBass($0, Int32(value)), "SetEqualizerClearBass") }
+    }
+
+    func setDSEE(_ on: Bool) {
+        stage { try check(mdrHeadphonesSetDSEE($0, on ? MDR_YES : MDR_NO), "SetDSEE") }
+    }
+
+    func setSpeakToChat(enabled: Bool? = nil, sensitivity: MDRSpeechSensitivity? = nil,
+                        timeout: MDRSpeakTimeout? = nil) {
+        stage { device in
+            guard var stc = readSpeakToChat(device, PROPERTY_DESIRED) else { return }
+            if let enabled { stc.enabled = enabled ? MDR_YES : MDR_NO }
+            if let sensitivity { stc.sensitivity = sensitivity }
+            if let timeout { stc.timeout = timeout }
+            try check(mdrHeadphonesSetSpeakToChat(device, &stc), "SetSpeakToChat")
+        }
+    }
+
+    func setControl(_ location: MDRAssignableActionKeyLocation, to action: MDRAssignableAction) {
+        stage { try stageControl($0, location: location, action: action) }
+        pendingControl = (location, action)
+    }
+
+    /// Some models (e.g. WF-1000XM6 on FW 2.0.5) ACK touch-control writes but keep the old mapping.
+    /// After the write is applied, re-check and say so instead of silently snapping back.
+    private var pendingControl: (MDRAssignableActionKeyLocation, MDRAssignableAction)?
+
+    private func verifyPendingControl() {
+        guard let (location, action) = pendingControl else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+            guard let self, let device = self.device else { return }
+            self.pendingControl = nil
+            let current = readControls(device, PROPERTY_CURRENT).first { $0.location == location }?.action
+            if current != action {
+                self.notice = "\(self.modelName ?? "These headphones") didn't apply the touch control change. "
+                    + "Use Sony's app to change touch controls on this model."
+                self.readSettings(device)
+            }
+        }
+    }
+
+    func setAutoPowerOff(minutes: Int) {
+        stage { device in
+            guard var p = readPower(device, PROPERTY_DESIRED)?.raw else { return }
+            p.auto_power_off_minutes = UInt32(minutes)
+            try check(mdrHeadphonesSetPower(device, &p), "SetPower")
+        }
+    }
+
+    func setPowerOffWhenRemoved(_ on: Bool) {
+        stage { device in
+            guard var p = readPower(device, PROPERTY_DESIRED)?.raw else { return }
+            p.wearing_power = MDRWearingPowerMode(on ? MDR_WEARING_POWER_WHEN_REMOVED : MDR_WEARING_POWER_DISABLED)
+            try check(mdrHeadphonesSetPower(device, &p), "SetPower")
+        }
+    }
+
+    func setAutoPause(_ on: Bool) {
+        stage { device in
+            guard var p = readPower(device, PROPERTY_DESIRED)?.raw else { return }
+            p.auto_pause = on ? MDR_YES : MDR_NO
+            try check(mdrHeadphonesSetPower(device, &p), "SetPower")
+        }
+    }
+
+    func setListeningMode(_ mode: MDRListeningMode) {
+        stage { device in
+            var l = MDRListening(mode: mode, background_room: MDRRoomSize(MDR_ROOM_UNKNOWN))
+            try check(mdrHeadphonesSetListening(device, &l), "SetListening")
+        }
+    }
+
+    // MARK: Phase 4: sound output & switching headphones
+
+    func refreshSoundOutput() {
+        guard let d = selectedDevice,
+              let out = AudioOutput.device(forBluetoothAddress: d.address, name: d.name) else {
+            isSoundOutput = false
+            return
+        }
+        isSoundOutput = out.id == AudioOutput.defaultOutputID
+    }
+
+    /// Makes the selected headphones the Mac's sound output. The Bluetooth audio device can show up
+    /// in CoreAudio a moment after the link, so this retries briefly.
+    func useAsSoundOutput(attempts: Int = 4) {
+        guard let d = selectedDevice else { return }
+        if let out = AudioOutput.device(forBluetoothAddress: d.address, name: d.name) {
+            if !AudioOutput.makeDefault(out) { notice = "macOS refused to switch the sound output." }
+            refreshSoundOutput()
+        } else if attempts > 1 {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { [weak self] in
+                self?.useAsSoundOutput(attempts: attempts - 1)
+            }
+        } else {
+            notice = "\(d.name) isn't available as a sound output yet."
+        }
+    }
+
+    /// Switches to other paired headphones: selects them, opens their Bluetooth link if needed
+    /// (the control connection follows from the connect notification), and moves sound to them.
+    func switchTo(_ address: String) {
+        pendingOutputSwitch = true
+        selectedAddress = address
+        guard let d = selectedDevice, !d.isConnected, let bt = IOBluetoothDevice(addressString: address) else {
+            return
+        }
+        bluetoothConnecting = true
+        if bt.openConnection(self) != kIOReturnSuccess {
+            bluetoothConnecting = false
+            notice = "Couldn't reach \(d.name). Is it on and nearby?"
+        }
+    }
+
+    /// IOBluetoothDevice async `openConnection(_:)` completion (informal protocol).
+    @objc func connectionComplete(_ device: IOBluetoothDevice!, status: IOReturn) {
+        bluetoothConnecting = false
+        if status != kIOReturnSuccess {
+            notice = "Couldn't connect \(device?.name ?? "the headphones") (error \(status))."
+        }
+        refreshDevices()
+    }
+
+    private func didBecomeReady() {
+        notice = nil
+        refreshSoundOutput()
+        NSLog("XMBar ready: eq=%@ bands=%@ dsee=%@ stc=%@ controls=%@ autoOff=%@ listening=%@ macOutput=%@",
+              equalizer.map { describe(eqPreset: $0.preset) } ?? "-",
+              equalizer.map { "\($0.bands)" } ?? "-",
+              equalizer.map { $0.dseeAvailable ? "\($0.dseeEnabled)" : "n/a" } ?? "-",
+              speakToChat.map { "\($0.enabled)" } ?? "-",
+              controls.map { describe(assignableAction: $0.action) }.joined(separator: "/"),
+              power.map { describe(autoOffMinutes: $0.minutes) } ?? "-",
+              listening.map { describe(listeningMode: $0.mode) } ?? "-",
+              "\(isSoundOutput)")
+        if pendingOutputSwitch && prefs.autoSwitchOutput { useAsSoundOutput() }
+        pendingOutputSwitch = false
+    }
+
     // MARK: IOBluetooth notifications
 
     @objc private func bluetoothDeviceConnected(_ note: IOBluetoothUserNotification, device: IOBluetoothDevice) {
         refreshDevices()
         guard let addr = device.addressString.map(normalizeAddress) else { return }
         if selectedAddress == nil, devices.first(where: { $0.address == addr })?.looksLikeSony == true {
+            pendingOutputSwitch = true
             selectedAddress = addr // didSet connects
             return
         }
         guard addr == selectedAddress else { return }
+        pendingOutputSwitch = true
+        if prefs.connectionAlerts {
+            Notifier.post("Connected", "\(device.name ?? "Headphones") connected.", id: "connection")
+        }
         // Give the headset a moment to bring up its control service after the audio link.
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in self?.connectIfPossible() }
     }
 
     @objc private func bluetoothDeviceDisconnected(_ note: IOBluetoothUserNotification, device: IOBluetoothDevice) {
+        if prefs.connectionAlerts {
+            Notifier.post("Disconnected", "\(device.name ?? "Headphones") disconnected.", id: "connection")
+        }
         teardown(next: .idle)
         refreshDevices()
+        refreshSoundOutput()
     }
 }

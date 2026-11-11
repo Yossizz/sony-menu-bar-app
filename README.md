@@ -33,6 +33,36 @@ It connects automatically at launch, and again whenever the selected headphones 
 disconnects when they leave. Battery refreshes every 60 s. Changes made on the headphones themselves also
 show up in the panel.
 
+### Phase 3: headphone settings (the Sound and Settings tabs)
+
+- **Sound:** EQ preset picker, a slider for each band (labeled by frequency; editing a band switches to
+  Custom, as Sony's app does), Flat, Clear Bass on models that have it, and DSEE.
+- **Settings:** Speak-to-Chat (on/off, voice detection, end after), touch controls, auto power-off,
+  turn off when removed, and pause when removed. Each appears only if the headphones offer it.
+- **Controls:** listening mode, shown when the device offers more than Standard.
+
+### Phase 4: Mac integration
+
+- **Launch at login** (`SMAppService`). macOS may ask you to allow it under Login Items.
+- **Low-battery alerts** at 10, 15, 20, or 30%, once per earbud each time it drops below the threshold.
+  Connect and disconnect notifications are optional.
+- **Sound output:** "Use for Mac sound" button. By default the Mac's output also switches automatically when
+  the headphones connect. The CoreAudio device is matched by the Bluetooth address in its UID.
+- **Switching headphones:** picking another paired headset in the device picker opens its Bluetooth link,
+  connects the control channel, and moves the Mac's sound to it.
+
+### Tested on a WF-1000XM6 (FW 2.0.5) with `xmctl`
+
+| Setting | Write result |
+|---|---|
+| EQ preset (Heavy ↔ Clear) | ✅ applied |
+| EQ bands (switches to Custom automatically) | ✅ applied |
+| DSEE on/off | ✅ applied |
+| Speak-to-Chat on/off | ✅ applied |
+| Touch controls | ❌ the earbuds ACK the command but keep the old mapping (tried 3 actions). The app reports this rather than snapping back silently. |
+| Auto power-off | n/a: the device offers only "Never" |
+| Listening mode | n/a: the device offers only Standard |
+
 ```bash
 ./scripts/bundle-app.sh
 ```
@@ -48,7 +78,7 @@ open build/XMBar.app
 | `vendor/SonyHeadphonesClient` | git submodule, pinned to `ce2e54c`, the source of libmdr and libmdr-bt |
 | `scripts/build-libmdr.sh` | builds `libmdr.a`, `libmdr-bt.a`, and `libfmt.a` into `build/lib` with CMake |
 | `Sources/CMDR` | module map that exposes the libmdr C API (`mdr-c/*.h`) to Swift |
-| `Sources/XMKit` | Swift helpers over libmdr shared by both targets: the blocking `Session`, device list, and formatting |
+| `Sources/XMKit` | Swift helpers over libmdr shared by both targets: the blocking `Session`, device list, settings readers and writers (`Settings.swift`), CoreAudio output (`AudioOutput.swift`) |
 | `Sources/xmctl` | the CLI |
 | `Sources/XMBar` | the menu bar app: `HeadphonesController` (a non-blocking libmdr event loop) and the SwiftUI views |
 | `scripts/bundle-app.sh` | builds `build/XMBar.app` and ad-hoc signs it |
