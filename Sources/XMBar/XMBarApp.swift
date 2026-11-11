@@ -4,6 +4,10 @@ import SwiftUI
 struct XMBarApp: App {
     @StateObject private var controller = HeadphonesController()
 
+    init() {
+        IconPreview.renderIfRequested() // debug: `--render-icons <dir>` writes PNGs and exits
+    }
+
     var body: some Scene {
         MenuBarExtra {
             PopoverView()
@@ -19,15 +23,14 @@ struct MenuBarLabel: View {
     @ObservedObject var controller: HeadphonesController
 
     var body: some View {
-        let symbol = controller.selectedDevice?.isEarbuds == true ? "earbuds" : "headphones"
+        let icon = Image(nsImage: MenuBarIcon.image(for: ProductKind(device: controller.selectedDevice)))
         if controller.phase == .ready, let pct = controller.headlineBattery {
             HStack(spacing: 3) {
-                Image(systemName: symbol)
+                icon
                 Text("\(pct)%").monospacedDigit()
             }
         } else {
-            Image(systemName: symbol)
-                .opacity(controller.phase == .ready ? 1 : 0.5)
+            icon.opacity(controller.phase == .ready ? 1 : 0.5)
         }
     }
 }
