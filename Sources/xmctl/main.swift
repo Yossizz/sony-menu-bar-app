@@ -1,5 +1,5 @@
-import CMDR
 import Foundation
+import XMKit
 
 // xmctl — Phase 0 spike: prove we can talk to a WH-1000XM6 (MDR protocol V2) from Swift.
 
@@ -51,50 +51,6 @@ let voice = takeFlag("--voice")
 let protocolChoice: Session.ProtocolChoice = forceV1 ? .v1 : (forceV2 ? .v2 : .auto)
 
 guard let command = args.first else { print(usage); exit(2) }
-
-// MARK: Formatting helpers
-
-func name(ofEvent e: MDREvent) -> String {
-    let names: [UInt32: String] = [
-        1: "IDENTITY_CHANGED", 2: "BATTERY_CHANGED", 3: "PLAYBACK_CHANGED", 4: "NOISE_CONTROL_CHANGED",
-        5: "SPEAK_TO_CHAT_CHANGED", 6: "LISTENING_MODE_CHANGED", 7: "EQUALIZER_CHANGED",
-        8: "PAIRED_DEVICES_CHANGED", 9: "PAIRING_CHANGED", 10: "GENERAL_SETTINGS_CHANGED",
-        11: "ASSIGNABLE_CONTROLS_CHANGED", 12: "POWER_CHANGED", 13: "VOICE_GUIDANCE_CHANGED",
-        14: "CONNECTION_MODE_CHANGED", 15: "SAFE_LISTENING_CHANGED", 16: "INITIALIZE_COMPLETE",
-        17: "SYNC_COMPLETE", 18: "APPLY_COMPLETE", 19: "ALERT", 20: "INTERACTION", 21: "DEVICE_MESSAGE",
-        22: "NEED_SYNC", 23: "UNHANDLED", 24: "WEARING_STATUS_CHANGED", 25: "VOICE_ASSISTANT_CHANGED",
-    ]
-    return names[e] ?? "EVENT_\(e)"
-}
-
-func describe(noiseMode m: MDRNoiseMode) -> String {
-    switch m {
-    case MDRNoiseMode(MDR_NOISE_MODE_OFF): return "off"
-    case MDRNoiseMode(MDR_NOISE_MODE_CANCELLING): return "noise cancelling"
-    case MDRNoiseMode(MDR_NOISE_MODE_AMBIENT): return "ambient"
-    case MDRNoiseMode(MDR_NOISE_MODE_WIND_NOISE_REDUCTION): return "wind noise reduction"
-    default: return "unknown(\(m))"
-    }
-}
-
-func describe(codec c: MDRAudioCodec) -> String {
-    ["unknown", "SBC", "AAC", "LDAC", "aptX", "aptX HD", "LC3"][safe: Int(c)] ?? (c == 255 ? "other" : "\(c)")
-}
-
-func describe(eqPreset p: MDREqualizerPreset) -> String {
-    let names = ["off", "rock", "pop", "jazz", "dance", "EDM", "R&B/hip-hop", "acoustic", "bright", "excited",
-                 "mellow", "relaxed", "vocal", "treble", "bass", "speech", "heavy", "clear", "hard", "soft",
-                 "gaming", "FPS 1", "FPS 2", "FPS 3", "custom", "user 1", "user 2", "user 3", "user 4", "user 5"]
-    return names[safe: Int(p)] ?? "preset \(p)"
-}
-
-func describe(charging c: MDRChargingState) -> String {
-    ["", "", " (charging)", " (charged)"][safe: Int(c)] ?? ""
-}
-
-extension Array {
-    subscript(safe i: Int) -> Element? { indices.contains(i) ? self[i] : nil }
-}
 
 func printNoiseControl(_ s: Session, _ type: MDRPropertyType = MDRPropertyType(MDR_PROPERTY_CURRENT)) {
     guard let dev = s.device else { return }
@@ -186,16 +142,14 @@ func openSession(address: String) -> Session {
 
 func requireAddress() -> String {
     guard args.count >= 2 else { fail("missing <MAC>\n\n\(usage)") }
-    return args[1].replacingOccurrences(of: "-", with: ":").uppercased()
+    return normalizeAddress(args[1])
 }
 
 switch command {
 case "list":
-    do {
-        let devices = try Session().pairedDevices()
-        if devices.isEmpty { print("no paired devices") }
-        for d in devices { print("\(d.address)  \(d.name)") }
-    } catch { fail("\(error)") }
+    let devices = pairedDevices()
+    if devices.isEmpty { print("no paired devices") }
+    for d in devices { print("\(d.address)  \(d.isConnected ? "connected    " : "not connected")  \(d.name)") }
 
 case "status":
     let s = openSession(address: requireAddress())
@@ -218,7 +172,7 @@ case "anc":
 
     var nc = MDRNoiseControl()
     do {
-        try s.check(mdrHeadphonesGetNoiseControl(dev, MDRPropertyType(MDR_PROPERTY_DESIRED), &nc), "GetNoiseControl")
+        try check(mdrHeadphonesGetNoiseControl(dev, MDRPropertyType(MDR_PROPERTY_DESIRED), &nc), "GetNoiseControl")
         nc.mode = mode
         if let levelArg {
             guard let level = UInt32(levelArg) else { fail("--level must be a number") }
@@ -233,7 +187,7 @@ case "anc":
         if mode == MDRNoiseMode(MDR_NOISE_MODE_AMBIENT) {
             nc.focus_on_voice = MDRBoolean(voice ? MDR_TRUE : MDR_FALSE)
         }
-        try s.check(mdrHeadphonesSetNoiseControl(dev, &nc), "SetNoiseControl")
+        try check(mdrHeadphonesSetNoiseControl(dev, &nc), "SetNoiseControl")
         try s.commit()
         try s.drain(1.0) // device reports the new state after ACKing the write
     } catch { fail("\(error)") }

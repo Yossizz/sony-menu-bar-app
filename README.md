@@ -19,6 +19,28 @@ Verified on 2026-11-11 with a **WF-1000XM6** (firmware 2.0.5) over protocol V2: 
 noise cancelling ↔ ambient (level 10), 10-band EQ read, DSEE read, and the feature list.
 Not yet tried: a WH-1000XM6, writing EQ, or the WH-1000XM4 (V1).
 
+## Phase 2: menu bar app (XMBar)
+
+`XMBar.app` is a menu bar-only app (no Dock icon). The menu bar shows a headphones or earbuds icon and the
+lowest earbud battery percentage. Clicking it opens a panel with:
+
+- the device picker, connection state, and firmware version
+- battery for left, right, and the case
+- noise control: Off, Noise Cancelling, or Ambient, plus the ambient level slider, automatic ambient, and focus on voice
+- Connect, Disconnect, and Quit
+
+It connects automatically at launch, and again whenever the selected headphones connect to the Mac. It
+disconnects when they leave. Battery refreshes every 60 s. Changes made on the headphones themselves also
+show up in the panel.
+
+```bash
+./scripts/bundle-app.sh
+```
+
+```bash
+open build/XMBar.app
+```
+
 ## Layout
 
 | Path | What |
@@ -26,7 +48,10 @@ Not yet tried: a WH-1000XM6, writing EQ, or the WH-1000XM4 (V1).
 | `vendor/SonyHeadphonesClient` | git submodule, pinned to `ce2e54c`, the source of libmdr and libmdr-bt |
 | `scripts/build-libmdr.sh` | builds `libmdr.a`, `libmdr-bt.a`, and `libfmt.a` into `build/lib` with CMake |
 | `Sources/CMDR` | module map that exposes the libmdr C API (`mdr-c/*.h`) to Swift |
-| `Sources/xmctl` | the CLI: `Session.swift` handles connect, init, and the event loop; `main.swift` holds the commands |
+| `Sources/XMKit` | Swift helpers over libmdr shared by both targets: the blocking `Session`, device list, and formatting |
+| `Sources/xmctl` | the CLI |
+| `Sources/XMBar` | the menu bar app: `HeadphonesController` (a non-blocking libmdr event loop) and the SwiftUI views |
+| `scripts/bundle-app.sh` | builds `build/XMBar.app` and ad-hoc signs it |
 
 ## Build
 
