@@ -1,0 +1,4 @@
+module CMDR [system] {
+    header "shim.h"
+    export *
+}

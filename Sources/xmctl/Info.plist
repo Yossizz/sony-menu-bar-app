@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>local.xm-menubar.xmctl</string>
+    <key>CFBundleName</key>
+    <string>xmctl</string>
+    <key>NSBluetoothAlwaysUsageDescription</key>
+    <string>xmctl talks to your paired headphones over Bluetooth to read and change their settings.</string>
+</dict>
+</plist>
