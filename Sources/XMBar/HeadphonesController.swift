@@ -122,7 +122,26 @@ final class HeadphonesController: NSObject, ObservableObject {
         }
         connectNotification = IOBluetoothDevice.register(
             forConnectNotifications: self, selector: #selector(bluetoothDeviceConnected(_:device:)))
+        if debugHooks { installDebugHooks() }
         connectIfPossible()
+    }
+
+    // MARK: Debug hooks (launch with --debug-hooks)
+
+    /// Lets scripts drive the same code paths as the panel's buttons, so UI behavior can be
+    /// tested against real headphones without clicking. Off unless the app is launched with the flag.
+    private let debugHooks = CommandLine.arguments.contains("--debug-hooks")
+
+    private func installDebugHooks() {
+        DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("local.xm-menubar.debug.setMode"), object: nil, queue: .main
+        ) { [weak self] note in
+            guard let self, let name = note.object as? String else { return }
+            let modes: [String: NoiseMode] = ["off": .off, "nc": .cancelling, "ambient": .ambient]
+            guard let mode = modes[name] else { return }
+            NSLog("XMBar debug: setMode(%@)", name)
+            self.setMode(mode)
+        }
     }
 
     // MARK: Device list & connection
@@ -279,6 +298,7 @@ final class HeadphonesController: NSObject, ObservableObject {
     }
 
     private func handle(_ event: MDREvent, _ device: OpaquePointer) {
+        if debugHooks, event != MDREvent(MDR_EVENT_UNHANDLED) { NSLog("XMBar event: %@", name(ofEvent: event)) }
         switch event {
         case MDREvent(MDR_EVENT_INITIALIZE_COMPLETE):
             phase = .ready
@@ -342,10 +362,8 @@ final class HeadphonesController: NSObject, ObservableObject {
                               enabled: prefs.lowBatteryAlerts)
     }
 
-    /// Staged values while writes are in flight, the device's values otherwise (see `readNoise`).
-    private func viewType(_ device: OpaquePointer) -> MDRPropertyType {
-        mdrHeadphonesIsDirty(device) == MDR_YES ? PROPERTY_DESIRED : PROPERTY_CURRENT
-    }
+    /// The property view the panel displays; see `readNoise` for why it is always DESIRED.
+    private func viewType(_ device: OpaquePointer) -> MDRPropertyType { PROPERTY_DESIRED }
 
     private func readSettings(_ device: OpaquePointer) {
         let type = viewType(device)
@@ -358,11 +376,13 @@ final class HeadphonesController: NSObject, ObservableObject {
         listening = readListening(device, type)
     }
 
-    /// Shows the staged (DESIRED) values while a write is in flight, the device's (CURRENT) otherwise,
-    /// so the UI neither lags the user's input nor misses changes made on the headphones.
+    /// Always shows the DESIRED view. libmdr keeps it equal to the user's latest edit while a write is
+    /// staged or in flight, and overwrites it with every device report once the property is clean
+    /// (see MDRProperty::overwrite), so it also follows changes made on the headphones. CURRENT only
+    /// moves on device reports, and some models don't report after accepting a write, which made the
+    /// panel snap back to the previous mode after each change.
     private func readNoise(_ device: OpaquePointer) {
-        let type = mdrHeadphonesIsDirty(device) == MDR_YES ? PROPERTY_DESIRED : PROPERTY_CURRENT
-        guard let nc = mdrNoiseControl(device, type) else { return }
+        guard let nc = mdrNoiseControl(device, viewType(device)) else { return }
         let mode: NoiseMode
         switch nc.mode {
         case MDRNoiseMode(MDR_NOISE_MODE_CANCELLING): mode = .cancelling
