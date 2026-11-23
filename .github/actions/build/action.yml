@@ -1,0 +1,44 @@
+name: Build XMBar
+description: Install build tools, build (or restore) libmdr, and swift build both products in release.
+runs:
+  using: composite
+  steps:
+    - name: Install build tools
+      shell: bash
+      run: |
+        command -v ninja >/dev/null || brew install ninja
+        if ! command -v cmake >/dev/null; then
+          brew install cmake
+        fi
+        # build-libmdr.sh needs cmake >= 3.31
+        ver="$(cmake --version | head -1 | awk '{print $3}')"
+        if [[ "$(printf '%s\n' 3.31 "$ver" | sort -V | head -1)" != "3.31" ]]; then
+          echo "cmake $ver is older than 3.31; upgrading via Homebrew"
+          brew install cmake || brew upgrade cmake
+        fi
+        cmake --version | head -1
+        ninja --version
+
+    - name: Compute libmdr cache key
+      id: libmdr-key
+      shell: bash
+      run: |
+        sub="$(git rev-parse HEAD:vendor/SonyHeadphonesClient)"
+        script="$(shasum -a 256 scripts/build-libmdr.sh | cut -c1-16)"
+        echo "key=libmdr-${{ runner.os }}-${{ runner.arch }}-$sub-$script" >> "$GITHUB_OUTPUT"
+
+    - name: Cache build/lib
+      id: libmdr-cache
+      uses: actions/cache@v4
+      with:
+        path: build/lib
+        key: ${{ steps.libmdr-key.outputs.key }}
+
+    - name: Build libmdr
+      if: steps.libmdr-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: scripts/build-libmdr.sh
+
+    - name: Swift build (release, all products)
+      shell: bash
+      run: swift build -c release
