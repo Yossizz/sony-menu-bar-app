@@ -75,6 +75,22 @@ final class HeadphonesController: NSObject, ObservableObject {
     @Published private(set) var bluetoothConnecting = false
     /// Transient message for the panel (a rejected write, a failed switch, …).
     @Published var notice: String?
+
+    // Multipoint, now playing, wearing.
+    @Published private(set) var peers: [HeadsetPeer] = [] {
+        didSet { if peers != oldValue { NSLog("XMBar peers: %@", peers.map { "\($0.name)\($0.connected ? "+" : "")\($0.isPlaybackSource ? "*" : "")" }.joined(separator: ", ")) } }
+    }
+    /// nil when the headphones can't pin playback to one source.
+    @Published private(set) var autoSourceSwitch: Bool?
+    @Published private(set) var nowPlaying: NowPlaying? {
+        didSet { if nowPlaying != oldValue, let n = nowPlaying { NSLog("XMBar playback: %@ %@ – %@ vol %@", n.isPlaying ? "playing" : "\(n.status)", n.title ?? "-", n.artist ?? "-", n.volume.map(String.init) ?? "-") } }
+    }
+    @Published private(set) var wearing: Wearing? {
+        didSet { if wearing != oldValue { NSLog("XMBar wearing: %@", String(describing: wearing)) } }
+    }
+    /// A confirmation the headphones are asking for (e.g. before a multipoint change).
+    @Published private(set) var pendingAlert: String?
+    private var pausedByRemoval = false
     let prefs = Preferences()
     private var batteryTracker = LowBatteryTracker()
     private var pendingOutputSwitch = false
@@ -89,8 +105,10 @@ final class HeadphonesController: NSObject, ObservableObject {
 
     /// Lowest earbud/headphone level, for the menu bar title (the case doesn't count).
     var headlineBattery: Int? {
-        batteries.filter { $0.label != "Case" }.map(\.percent).min()
+        debugBatteryOverride ?? batteries.filter { $0.label != "Case" }.map(\.percent).min()
     }
+    /// Debug hooks only: pretend the battery is at this level (menu bar colour testing).
+    @Published private(set) var debugBatteryOverride: Int?
 
     // MARK: libmdr handles
 
@@ -141,6 +159,22 @@ final class HeadphonesController: NSObject, ObservableObject {
             guard let mode = modes[name] else { return }
             NSLog("XMBar debug: setMode(%@)", name)
             self.setMode(mode)
+        }
+        DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("local.xm-menubar.debug.playback"), object: nil, queue: .main
+        ) { [weak self] note in
+            guard let self, let name = note.object as? String else { return }
+            let actions: [String: UInt32] = ["play": MDR_PLAYBACK_PLAY, "pause": MDR_PLAYBACK_PAUSE,
+                                             "next": MDR_PLAYBACK_NEXT, "previous": MDR_PLAYBACK_PREVIOUS]
+            guard let a = actions[name] else { return }
+            NSLog("XMBar debug: playback(%@)", name)
+            self.playback(MDRPlaybackAction(a))
+        }
+        DistributedNotificationCenter.default().addObserver(
+            forName: Notification.Name("local.xm-menubar.debug.fakeBattery"), object: nil, queue: .main
+        ) { [weak self] note in
+            self?.debugBatteryOverride = (note.object as? String).flatMap(Int.init) // "" clears it
+            NSLog("XMBar debug: fake battery %@", (note.object as? String) ?? "-")
         }
     }
 
@@ -239,6 +273,12 @@ final class HeadphonesController: NSObject, ObservableObject {
         controls = []
         power = nil
         listening = nil
+        peers = []
+        autoSourceSwitch = nil
+        nowPlaying = nil
+        wearing = nil
+        pendingAlert = nil
+        pausedByRemoval = false
         batteryTracker.reset()
         phase = next
     }
@@ -306,6 +346,7 @@ final class HeadphonesController: NSObject, ObservableObject {
             readCapabilities(device)
             readNoise(device)
             readSettings(device)
+            readConnectivity(device)
             needSync = true // battery levels only arrive via sync; reading them now would show 0%
             didBecomeReady()
         case MDREvent(MDR_EVENT_IDENTITY_CHANGED):
@@ -322,6 +363,17 @@ final class HeadphonesController: NSObject, ObservableObject {
              MDREvent(MDR_EVENT_ASSIGNABLE_CONTROLS_CHANGED), MDREvent(MDR_EVENT_POWER_CHANGED),
              MDREvent(MDR_EVENT_LISTENING_MODE_CHANGED):
             readSettings(device)
+        case MDREvent(MDR_EVENT_PAIRED_DEVICES_CHANGED), MDREvent(MDR_EVENT_PAIRING_CHANGED):
+            peers = readPeers(device)
+            autoSourceSwitch = readAutoSourceSwitch(device, viewType(device))
+        case MDREvent(MDR_EVENT_PLAYBACK_CHANGED):
+            nowPlaying = readNowPlaying(device, viewType(device))
+        case MDREvent(MDR_EVENT_WEARING_STATUS_CHANGED):
+            let old = wearing
+            wearing = readWearing(device)
+            wearingChanged(from: old, to: wearing)
+        case MDREvent(MDR_EVENT_ALERT):
+            pendingAlert = mdrText(device, MDRText(MDR_TEXT_LAST_ALERT)) ?? "The headphones need confirmation."
         case MDREvent(MDR_EVENT_NEED_SYNC):
             needSync = true
         default:
@@ -534,6 +586,64 @@ final class HeadphonesController: NSObject, ObservableObject {
         stage { device in
             var l = MDRListening(mode: mode, background_room: MDRRoomSize(MDR_ROOM_UNKNOWN))
             try check(mdrHeadphonesSetListening(device, &l), "SetListening")
+        }
+    }
+
+    // MARK: Multipoint, playback, wearing
+
+    private func readConnectivity(_ device: OpaquePointer) {
+        peers = readPeers(device)
+        autoSourceSwitch = readAutoSourceSwitch(device, viewType(device))
+        nowPlaying = readNowPlaying(device, viewType(device))
+        wearing = readWearing(device)
+    }
+
+    /// Connect / disconnect a source device, or make it the one the headphones play from.
+    func peerCommand(_ command: MDRPairedDeviceCommand, _ peer: HeadsetPeer) {
+        stage { try stagePeerCommand($0, command, address: peer.address) }
+    }
+
+    func setAutoSourceSwitch(_ on: Bool) {
+        stage { try check(mdrHeadphonesSetSourceSwitchControl($0, on ? MDR_YES : MDR_NO), "SetSourceSwitchControl") }
+        if let device { autoSourceSwitch = readAutoSourceSwitch(device, PROPERTY_DESIRED) }
+    }
+
+    func answerAlert(_ accept: Bool) {
+        stage {
+            try check(mdrHeadphonesSetAlertResponse(
+                $0, MDRAlertAction(accept ? MDR_ALERT_ACTION_POSITIVE : MDR_ALERT_ACTION_NEGATIVE)), "SetAlertResponse")
+        }
+        pendingAlert = nil
+    }
+
+    func playback(_ action: MDRPlaybackAction) {
+        stage { try stagePlayback($0, action) }
+        // The status only changes when the source reports back; show the intent right away.
+        if var n = nowPlaying {
+            if action == MDRPlaybackAction(MDR_PLAYBACK_PLAY) { n.status = MDRPlaybackStatus(MDR_PLAYBACK_PLAYING) }
+            if action == MDRPlaybackAction(MDR_PLAYBACK_PAUSE) { n.status = MDRPlaybackStatus(MDR_PLAYBACK_PAUSED) }
+            nowPlaying = n
+        }
+    }
+
+    func setVolume(_ volume: Int) {
+        stage { try check(mdrHeadphonesSetPlaybackVolume($0, UInt32(max(0, volume))), "SetPlaybackVolume") }
+        if let device { nowPlaying = readNowPlaying(device, PROPERTY_DESIRED) }
+    }
+
+    /// Pauses when an earbud comes out while audio is playing, and resumes once both are back in,
+    /// but only if we were the ones who paused. Commands go through the headphones, which forward
+    /// them to whichever device is playing (Mac or phone), like a tap on the earbud would.
+    private func wearingChanged(from old: Wearing?, to new: Wearing?) {
+        guard prefs.pauseWhenRemoved, let new else { return }
+        if new.removedCount > (old?.removedCount ?? 0), nowPlaying?.isPlaying == true {
+            NSLog("XMBar: earbud removed while playing → pause")
+            pausedByRemoval = true
+            playback(MDRPlaybackAction(MDR_PLAYBACK_PAUSE))
+        } else if new == .worn, pausedByRemoval {
+            NSLog("XMBar: earbuds back in → resume")
+            pausedByRemoval = false
+            playback(MDRPlaybackAction(MDR_PLAYBACK_PLAY))
         }
     }
 

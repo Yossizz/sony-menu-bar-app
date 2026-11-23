@@ -51,6 +51,20 @@ show up in the panel.
 - **Switching headphones:** picking another paired headset in the device picker opens its Bluetooth link,
   connects the control channel, and moves the Mac's sound to it.
 
+### Multipoint, now playing, wearing
+
+- **Devices tab:** the phones and computers the headphones are connected to. **Play** makes one of them the
+  audio source; **Connect** and **Disconnect** work from the ⋯ menu. The entry for this Mac can't be
+  disconnected from here, because that would cut XMBar's own connection. A switch controls whether audio
+  follows whichever device starts playing. When the headphones ask for confirmation, a banner shows it.
+- **Now Playing** card on the Controls tab: title, artist, and album when the playing device sends them;
+  previous, play/pause, and next; and the headphones' volume.
+- **Wearing:** a dot on each earbud's battery tile shows whether it's in the ear. With *Pause when an earbud
+  is removed* (on by default), taking one out while audio plays pauses it, and putting both back resumes it,
+  but only if XMBar paused it. The commands go through the headphones to whichever device is playing, just
+  like a tap on the earbud.
+- **Menu bar:** the battery percentage turns orange at the low-battery threshold and red at 10%.
+
 ### Tested on a WF-1000XM6 (FW 2.0.5) with `xmctl`
 
 | Setting | Write result |
@@ -70,6 +84,36 @@ show up in the panel.
 ```bash
 open build/XMBar.app
 ```
+
+## Install a release
+
+Download the DMG from [Releases](https://github.com/Yossizz/sony-menu-bar-app/releases) and drag XMBar into
+Applications. The app is ad-hoc signed and **not notarized**, so macOS blocks it on first launch. To open it,
+right-click it and choose **Open**, or use **System Settings → Privacy & Security → Open Anyway**, or run
+`xattr -dr com.apple.quarantine /Applications/XMBar.app`.
+
+## CI and releases
+
+- `.github/workflows/build.yml` runs on every push to `main` and on every PR (macos-15). It builds libmdr,
+  caching it per submodule commit, builds both products, and uploads `XMBar.zip` as an artifact.
+- `.github/workflows/release.yml` runs when a `v*` tag is pushed. It stamps the version from the tag
+  (`v0.3.0` → 0.3.0, with the commit count as the build number), builds `XMBar-<ver>.dmg` and `.zip`, and
+  creates a GitHub Release with install notes.
+- Both share `.github/actions/build`. `scripts/make-dmg.sh` builds the DMG.
+
+To cut a release:
+
+```bash
+git tag v0.3.0 && git push origin v0.3.0
+```
+
+## Debugging
+
+- `XMBar --render-icons <dir>` writes the icon preview sheet as PNGs.
+- `XMBar --debug-hooks` logs device events and accepts distributed notifications that drive the same code
+  as the panel buttons, so UI behavior can be tested on real headphones without clicking:
+  `local.xm-menubar.debug.setMode` (`off`, `nc`, or `ambient`), `.playback` (`play`, `pause`, `next`, or
+  `previous`), and `.fakeBattery` (a percentage, or empty to clear it).
 
 ## Layout
 

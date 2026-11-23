@@ -196,6 +196,20 @@ enum MenuBarIcon {
         cache[kind] = image
         return image
     }
+
+    /// The battery percentage as a coloured, non-template image. The menu bar renders labels as
+    /// monochrome templates, so colour only survives in an image that isn't marked as a template.
+    static func coloredPercent(_ percent: Int, color: NSColor) -> NSImage {
+        let text = Text("\(percent)%")
+            .font(.system(size: 13, weight: .semibold).monospacedDigit())
+            .foregroundColor(Color(nsColor: color))
+            .fixedSize()
+        let renderer = ImageRenderer(content: text)
+        renderer.scale = NSScreen.main?.backingScaleFactor ?? 2
+        let image = renderer.nsImage ?? NSImage()
+        image.isTemplate = false
+        return image
+    }
 }
 
 // MARK: Debug preview
@@ -221,6 +235,10 @@ enum IconPreview {
                 VStack(spacing: 6) {
                     HeadphonesGlyph().frame(width: 64, height: 64)
                     HeadphonesGlyph().frame(width: 18, height: 18)
+                }
+                VStack(spacing: 6) {
+                    Image(nsImage: MenuBarIcon.coloredPercent(15, color: .systemOrange))
+                    Image(nsImage: MenuBarIcon.coloredPercent(8, color: .systemRed))
                 }
                 ZStack {
                     Circle().fill(Color.accentColor)

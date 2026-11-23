@@ -12,6 +12,7 @@ final class Preferences: ObservableObject {
     }
     @Published var connectionAlerts: Bool { didSet { defaults.set(connectionAlerts, forKey: "connectionAlerts") } }
     @Published var autoSwitchOutput: Bool { didSet { defaults.set(autoSwitchOutput, forKey: "autoSwitchOutput") } }
+    @Published var pauseWhenRemoved: Bool { didSet { defaults.set(pauseWhenRemoved, forKey: "pauseWhenRemoved") } }
 
     // Launch at login lives in macOS (SMAppService), mirrored here for the UI.
     @Published private(set) var launchAtLogin = LaunchAtLogin.isEnabled
@@ -29,12 +30,13 @@ final class Preferences: ObservableObject {
     init() {
         defaults.register(defaults: [
             "lowBatteryAlerts": true, "lowBatteryThreshold": 20,
-            "connectionAlerts": false, "autoSwitchOutput": true,
+            "connectionAlerts": false, "autoSwitchOutput": true, "pauseWhenRemoved": true,
         ])
         lowBatteryAlerts = defaults.bool(forKey: "lowBatteryAlerts")
         lowBatteryThreshold = defaults.integer(forKey: "lowBatteryThreshold")
         connectionAlerts = defaults.bool(forKey: "connectionAlerts")
         autoSwitchOutput = defaults.bool(forKey: "autoSwitchOutput")
+        pauseWhenRemoved = defaults.bool(forKey: "pauseWhenRemoved")
     }
 }
 

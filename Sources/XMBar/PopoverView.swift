@@ -1,3 +1,4 @@
+import IOBluetooth
 import SwiftUI
 import XMKit
 
@@ -12,7 +13,9 @@ struct PopoverView: View {
     @EnvironmentObject var c: HeadphonesController
     @AppStorage("tab") private var tab: Tab = .controls
 
-    enum Tab: String, CaseIterable { case controls = "Controls", sound = "Sound", settings = "Settings" }
+    enum Tab: String, CaseIterable {
+        case controls = "Controls", sound = "Sound", devices = "Devices", settings = "Settings"
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -26,11 +29,15 @@ struct PopoverView: View {
                 switch tab {
                 case .controls: ControlsTab()
                 case .sound: SoundTab()
+                case .devices: DevicesTab()
                 case .settings: SettingsTab()
                 }
             } else {
                 ConnectCard()
                 if tab == .settings { Card { AppSettingsSection(prefs: c.prefs) } }
+            }
+            if let alert = c.pendingAlert {
+                AlertBanner(text: alert, answer: c.answerAlert)
             }
             if let notice = c.notice {
                 NoticeBanner(text: notice) { c.notice = nil }
@@ -288,7 +295,8 @@ struct ControlsTab: View {
 
     var body: some View {
         VStack(spacing: 10) {
-            Card { BatteryTiles(batteries: c.batteries, kind: ProductKind(device: c.selectedDevice)) }
+            Card { BatteryTiles(batteries: c.batteries, kind: ProductKind(device: c.selectedDevice), wearing: c.wearing) }
+            if let now = c.nowPlaying { Card { NowPlayingCard(now: now) } }
             Card { NoiseControlSection() }
             if let l = c.listening, l.available.count > 1 {
                 Card {
@@ -315,6 +323,7 @@ struct ControlsTab: View {
 struct BatteryTiles: View {
     let batteries: [HeadphonesController.Battery]
     let kind: ProductKind
+    var wearing: Wearing?
 
     var body: some View {
         if batteries.isEmpty {
@@ -324,8 +333,21 @@ struct BatteryTiles: View {
             }
         } else {
             HStack(spacing: 14) {
-                ForEach(batteries) { BatteryTile(battery: $0, kind: kind) }
+                ForEach(batteries) { BatteryTile(battery: $0, kind: kind, inEar: inEar($0.label)) }
             }
+        }
+    }
+}
+
+extension BatteryTiles {
+    /// nil when unknown or not an earbud; otherwise whether that bud is in the ear.
+    func inEar(_ label: String) -> Bool? {
+        guard let wearing else { return nil }
+        switch label {
+        case "L": return !(wearing == .leftOut || wearing == .bothOut)
+        case "R": return !(wearing == .rightOut || wearing == .bothOut)
+        case "": return wearing == .worn
+        default: return nil
         }
     }
 }
@@ -333,6 +355,7 @@ struct BatteryTiles: View {
 struct BatteryTile: View {
     let battery: HeadphonesController.Battery
     let kind: ProductKind
+    var inEar: Bool?
 
     private var title: String {
         switch battery.label {
@@ -359,6 +382,13 @@ struct BatteryTile: View {
                     .foregroundStyle(.secondary)
                     .frame(width: 18, height: 18)
                 Text(title).font(.caption).foregroundStyle(.secondary)
+                if let inEar {
+                    Circle()
+                        .fill(inEar ? Color.green : Color.clear)
+                        .overlay(Circle().stroke(inEar ? Color.green : Color.secondary, lineWidth: 1))
+                        .frame(width: 6, height: 6)
+                        .help(inEar ? "In ear" : "Out of ear")
+                }
                 if battery.charging {
                     Image(systemName: "bolt.fill").font(.caption2).foregroundStyle(.green)
                 }
@@ -650,6 +680,7 @@ struct AppSettingsSection: View {
                 Text(loginMessage).font(.caption).foregroundStyle(.secondary)
             }
             SwitchRow(title: "Use for Mac sound when connected", isOn: $prefs.autoSwitchOutput)
+            SwitchRow(title: "Pause when an earbud is removed", isOn: $prefs.pauseWhenRemoved)
             HStack {
                 SwitchRow(title: "Low battery alert", isOn: $prefs.lowBatteryAlerts)
                 Picker("", selection: $prefs.lowBatteryThreshold) {
@@ -665,3 +696,175 @@ struct AppSettingsSection: View {
         .onAppear { prefs.refreshLaunchAtLogin() }
     }
 }
+
+// MARK: - Alerts from the headphones
+
+struct AlertBanner: View {
+    let text: String
+    let answer: (Bool) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Label(text, systemImage: "questionmark.circle.fill")
+                .font(.callout)
+                .fixedSize(horizontal: false, vertical: true)
+            HStack {
+                Spacer()
+                Button("Cancel") { answer(false) }
+                Button("Continue") { answer(true) }.keyboardShortcut(.defaultAction)
+            }
+            .controlSize(.small)
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.accentColor.opacity(0.12)))
+    }
+}
+
+// MARK: - Now playing
+
+struct NowPlayingCard: View {
+    @EnvironmentObject var c: HeadphonesController
+    let now: NowPlaying
+
+    private var source: String? { c.peers.first { $0.isPlaybackSource }?.name }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                ZStack {
+                    RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.08))
+                    Image(systemName: "music.note").foregroundStyle(.secondary)
+                }
+                .frame(width: 38, height: 38)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(now.title ?? (now.isPlaying ? "Playing" : "Not playing"))
+                        .font(.callout.weight(.semibold))
+                        .lineLimit(1)
+                    let detail = [now.artist, now.album].compactMap { $0 }.joined(separator: " · ")
+                    Text(detail.isEmpty ? (source.map { "from \($0)" } ?? " ") : detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 4)
+                HStack(spacing: 14) {
+                    transport("backward.fill", MDR_PLAYBACK_PREVIOUS)
+                    transport(now.isPlaying ? "pause.fill" : "play.fill",
+                              now.isPlaying ? MDR_PLAYBACK_PAUSE : MDR_PLAYBACK_PLAY, size: 20)
+                    transport("forward.fill", MDR_PLAYBACK_NEXT)
+                }
+            }
+            if let volume = now.volume, let range = now.volumeRange {
+                HStack(spacing: 8) {
+                    Image(systemName: "speaker.fill").font(.caption).foregroundStyle(.secondary)
+                    Slider(value: Binding(get: { Double(volume) }, set: { c.setVolume(Int($0.rounded())) }),
+                           in: Double(range.lowerBound)...Double(range.upperBound), step: 1)
+                        .controlSize(.small)
+                    Image(systemName: "speaker.wave.3.fill").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func transport(_ symbol: String, _ action: UInt32, size: CGFloat = 15) -> some View {
+        Button { c.playback(MDRPlaybackAction(action)) } label: {
+            Image(systemName: symbol).font(.system(size: size))
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+// MARK: - Devices tab (multipoint)
+
+struct DevicesTab: View {
+    @EnvironmentObject var c: HeadphonesController
+
+    var body: some View {
+        VStack(spacing: 10) {
+            if c.peers.isEmpty {
+                Card {
+                    Text("These headphones don't report their connected devices.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+            } else {
+                Card {
+                    SectionTitle("Connected Devices")
+                    ForEach(c.peers) { PeerRow(peer: $0) }
+                    Text("The headphones can be connected to two devices at once. "
+                        + "Pick which one they play from.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            if let auto = c.autoSourceSwitch {
+                Card {
+                    SwitchRow(title: "Switch to the device that starts playing",
+                              isOn: Binding(get: { auto }, set: { c.setAutoSourceSwitch($0) }))
+                    Text(auto ? "Audio follows whichever device plays." : "Audio stays on the selected device.")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+            }
+        }
+    }
+}
+
+struct PeerRow: View {
+    @EnvironmentObject var c: HeadphonesController
+    let peer: HeadsetPeer
+
+    private var isThisMac: Bool { peer.address.uppercased() == thisMacAddress }
+
+    private var symbol: String {
+        let n = peer.name.lowercased()
+        if isThisMac || n.contains("mac") { return "laptopcomputer" }
+        if n.contains("ipad") || n.contains("tab") { return "ipad" }
+        if n.contains("iphone") || n.contains("phone") || n.contains("pixel") || n.contains("galaxy") { return "iphone" }
+        if n.contains("tv") { return "tv" }
+        return "display"
+    }
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(systemName: symbol)
+                .frame(width: 22)
+                .foregroundStyle(peer.connected ? Color.primary : Color.secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(isThisMac ? "\(peer.name) (this Mac)" : peer.name).font(.callout).lineLimit(1)
+                Text(peer.isPlaybackSource ? "Playing" : (peer.connected ? "Connected" : "Not connected"))
+                    .font(.caption)
+                    .foregroundStyle(peer.isPlaybackSource ? Color.accentColor : Color.secondary)
+            }
+            Spacer()
+            if peer.connected && !peer.isPlaybackSource {
+                Button("Play") { c.peerCommand(MDRPairedDeviceCommand(MDR_PAIRED_DEVICE_SELECT_PLAYBACK), peer) }
+                    .controlSize(.small)
+                    .help("Play audio from this device")
+            }
+            Menu {
+                if peer.connected {
+                    // Disconnecting this Mac would cut the app's own control channel.
+                    Button("Disconnect") { c.peerCommand(MDRPairedDeviceCommand(MDR_PAIRED_DEVICE_DISCONNECT), peer) }
+                        .disabled(isThisMac)
+                } else {
+                    Button("Connect") { c.peerCommand(MDRPairedDeviceCommand(MDR_PAIRED_DEVICE_CONNECT), peer) }
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+        }
+    }
+}
+
+/// This Mac's Bluetooth address, "AA:BB:…" upper case.
+let thisMacAddress: String = {
+    guard let raw = IOBluetoothHostController.default()?.addressAsString() else { return "" }
+    return normalizeAddress(raw)
+}()
