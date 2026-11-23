@@ -1,0 +1,19 @@
+XMBar
+Copyright 2026 Yossizz (https://github.com/Yossizz)
+https://github.com/Yossizz/sony-menu-bar-app
+
+This product includes XMBar, created by Yossizz and licensed under the
+Apache License, Version 2.0 (see LICENSE). Under section 4(d) of the
+license, anyone who distributes XMBar or a work derived from it must include
+a readable copy of these attribution notices: in a NOTICE file, in the
+source or documentation, or wherever the work displays third-party notices.
+
+XMBar is an unofficial project. It is not made, endorsed, or supported by
+Sony. Sony and Sony product names are trademarks of Sony Group Corporation.
+
+Third-party software
+--------------------
+XMBar includes libmdr / SonyHeadphonesClient
+(https://github.com/mos9527/SonyHeadphonesClient) by mos9527 and
+contributors, and {fmt} (https://github.com/fmtlib/fmt). Both are MIT-licensed.
+Their copyright and license notices are in THIRD_PARTY_NOTICES.md.

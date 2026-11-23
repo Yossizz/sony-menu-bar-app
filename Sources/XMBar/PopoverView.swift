@@ -231,7 +231,7 @@ struct Footer: View {
                 .buttonStyle(.borderless)
                 .help("App settings")
             }
-            Text("Unofficial · not affiliated with Sony")
+            Text("XMBar by Yossizz · not affiliated with Sony")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
             Spacer()

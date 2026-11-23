@@ -25,6 +25,8 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/XMBar"
 cp "$ROOT/Sources/XMBar/Info.plist" "$APP/Contents/Info.plist"
+# Apache-2.0 requires LICENSE and NOTICE with every copy; libmdr/{fmt} (MIT) require their notices too.
+cp "$ROOT/LICENSE" "$ROOT/NOTICE" "$ROOT/THIRD_PARTY_NOTICES.md" "$APP/Contents/Resources/"
 
 if [[ -n "${VERSION:-}" ]]; then
   BUILD_NUMBER="$(git -C "$ROOT" rev-list --count HEAD)"

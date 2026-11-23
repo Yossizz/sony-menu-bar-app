@@ -178,8 +178,20 @@ To cut a release:
 git tag -a v0.4.0 -m "XMBar 0.4.0" && git push origin v0.4.0
 ```
 
+## License
+
+Copyright © 2026 Yossizz. Licensed under the [Apache License 2.0](LICENSE).
+
+You're welcome to use, modify and share XMBar, **with credit**. If you redistribute it, or anything built
+from it, in source or binary form, you must:
+- keep the [NOTICE](NOTICE) file, which credits the original author, and include the license;
+- mark the files you changed.
+
+Third-party components keep their own licenses. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). The app
+bundle ships LICENSE, NOTICE and the third-party notices.
+
 ## Credits
 
-Built on [SonyHeadphonesClient / libmdr](https://github.com/mos9527/SonyHeadphonesClient) by
+Built on [libmdr / SonyHeadphonesClient](https://github.com/mos9527/SonyHeadphonesClient) by
 [@mos9527](https://github.com/mos9527), which continues [plutoberth's original project](https://github.com/plutoberth/SonyHeadphonesClient).
 Both are MIT-licensed. Thanks to everyone who reverse-engineered the protocol and reported devices there.
