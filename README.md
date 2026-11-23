@@ -1,183 +1,185 @@
-# xm-menubar
+# XMBar
 
-An unofficial macOS menu bar companion for Sony 1000X headphones, with the WH-1000XM6 as the primary target.
-It is not made or endorsed by Sony.
+A macOS menu bar app for Sony 1000X headphones and earbuds. Check battery, switch noise cancelling, tune the
+EQ, and manage multipoint without reaching for your phone.
 
-## Status: Phase 0 (protocol spike)
+> **Unofficial.** XMBar isn't made, endorsed or supported by Sony. It talks to the headphones with the same
+> Bluetooth protocol as Sony's app, through the open-source [libmdr](https://github.com/mos9527/SonyHeadphonesClient)
+> library. Sony product names belong to Sony.
 
-`xmctl` is a Swift command-line tool. It connects to paired headphones over Bluetooth RFCOMM and talks
-Sony's MDR protocol through [libmdr](https://github.com/mos9527/SonyHeadphonesClient) (MIT).
-That library's docs list the WH-1000XM6 as supported, including noise control, EQ, battery, and multipoint.
+## Features
 
-Phase 0 is done when, on a real XM6, you can:
+The menu bar shows your earbuds or headphones with their battery level. The number turns orange when the
+battery runs low and red at 10%. Click it for the panel:
 
-- [x] `xmctl list` shows the headphones
-- [x] `xmctl status <MAC>` prints the model, firmware, `protocol: V2`, battery %, and noise-control state
-- [x] `xmctl anc <MAC> nc|ambient|off` changes the mode, and `after →` shows the new mode
+**Controls**
+- Battery for left, right and the case, with an in-ear indicator per earbud
+- Noise control (Noise Cancelling, Ambient or Off), the ambient level, automatic ambient and Focus on Voice
+- Now playing: track info when the source device sends it, previous / play-pause / next, and volume
+- Listening modes, on headphones that offer them
 
-Verified on 2026-11-11 with a **WF-1000XM6** (firmware 2.0.5) over protocol V2: battery L/R/case,
-noise cancelling ↔ ambient (level 10), 10-band EQ read, DSEE read, and the feature list.
-Not yet tried: a WH-1000XM6, writing EQ, or the WH-1000XM4 (V1).
+**Sound**
+- EQ presets plus a slider for each band. Editing a band switches to Custom, as in Sony's app.
+- Clear Bass and DSEE upscaling, where supported
 
-## Phase 2: menu bar app (XMBar)
+**Devices** (multipoint)
+- The phones and computers your headphones are connected to, and which one is playing
+- Choose the device to play from, and connect or disconnect devices
+- Turn automatic source switching on or off
 
-`XMBar.app` is a menu bar-only app (no Dock icon). The menu bar shows a headphones or earbuds icon and the
-lowest earbud battery percentage. Clicking it opens a panel with:
+**Settings**
+- Speak-to-Chat with voice detection and timeout, touch controls, auto power-off, and turn off or pause when
+  removed
+- **Pause when an earbud is removed:** taking an earbud out pauses playback, and putting both back resumes it
+- Low-battery notifications (10–30%), connect/disconnect notifications, launch at login
+- Use the headphones for Mac sound automatically when they connect
 
-- the device picker, connection state, and firmware version
-- battery for left, right, and the case
-- noise control: Off, Noise Cancelling, or Ambient, plus the ambient level slider, automatic ambient, and focus on voice
-- Connect, Disconnect, and Quit
+**Mac integration**
+- Connects automatically when your headphones connect to the Mac, and reconnects after they've been in the case
+- Switch between several paired Sony headphones from the ⋯ menu. XMBar connects them and moves the Mac's sound
+  to them.
 
-It connects automatically at launch, and again whenever the selected headphones connect to the Mac. It
-disconnects when they leave. Battery refreshes every 60 s. Changes made on the headphones themselves also
-show up in the panel.
+Each control appears only if your model supports it.
 
-### Phase 3: headphone settings (the Sound and Settings tabs)
+## Supported headphones
 
-- **Sound:** EQ preset picker, a slider for each band (labeled by frequency; editing a band switches to
-  Custom, as Sony's app does), Flat, Clear Bass on models that have it, and DSEE.
-- **Settings:** Speak-to-Chat (on/off, voice detection, end after), touch controls, auto power-off,
-  turn off when removed, and pause when removed. Each appears only if the headphones offer it.
-- **Controls:** listening mode, shown when the device offers more than Standard.
+XMBar works with the models libmdr supports, which covers the 1000X series and several other Sony models.
+See libmdr's [device support notes](https://github.com/mos9527/SonyHeadphonesClient/tree/main/docs/device-support).
 
-### Phase 4: Mac integration
+| Model | Protocol | Tested with XMBar |
+|---|---|---|
+| WF-1000XM6 | V2 | ✅ Firmware 2.0.5: battery, noise control, EQ presets and bands, DSEE, Speak-to-Chat, multipoint list, wearing status |
+| WH-1000XM6, WH/WF-1000XM5 | V2 | Not yet; supported by libmdr |
+| WH-1000XM4, WH-1000XM3 | V1 | Not yet; V1 offers fewer settings |
 
-- **Launch at login** (`SMAppService`). macOS may ask you to allow it under Login Items.
-- **Low-battery alerts** at 10, 15, 20, or 30%, once per earbud each time it drops below the threshold.
-  Connect and disconnect notifications are optional.
-- **Sound output:** "Use for Mac sound" button. By default the Mac's output also switches automatically when
-  the headphones connect. The CoreAudio device is matched by the Bluetooth address in its UID.
-- **Switching headphones:** picking another paired headset in the device picker opens its Bluetooth link,
-  connects the control channel, and moves the Mac's sound to it.
+## Install
 
-### Multipoint, now playing, wearing
+1. Download `XMBar-<version>.dmg` from [Releases](https://github.com/Yossizz/sony-menu-bar-app/releases).
+2. Open it and drag **XMBar** into **Applications**.
+3. XMBar isn't notarized by Apple, so macOS blocks it on first launch. Allow it once, using one of these:
+   - right-click XMBar in Applications, choose **Open**, then confirm;
+   - try to open it, then go to **System Settings → Privacy & Security** and click **Open Anyway**;
+   - or run `xattr -dr com.apple.quarantine /Applications/XMBar.app`.
+4. Allow Bluetooth access when asked.
 
-- **Devices tab:** the phones and computers the headphones are connected to. **Play** makes one of them the
-  audio source; **Connect** and **Disconnect** work from the ⋯ menu. The entry for this Mac can't be
-  disconnected from here, because that would cut XMBar's own connection. A switch controls whether audio
-  follows whichever device starts playing. When the headphones ask for confirmation, a banner shows it.
-- **Now Playing** card on the Controls tab: title, artist, and album when the playing device sends them;
-  previous, play/pause, and next; and the headphones' volume.
-- **Wearing:** a dot on each earbud's battery tile shows whether it's in the ear. With *Pause when an earbud
-  is removed* (on by default), taking one out while audio plays pauses it, and putting both back resumes it,
-  but only if XMBar paused it. The commands go through the headphones to whichever device is playing, just
-  like a tap on the earbud.
-- **Menu bar:** the battery percentage turns orange at the low-battery threshold and red at 10%.
+Requires macOS 13 (Ventura) or later. Pair your headphones in **System Settings → Bluetooth** first. XMBar
+finds paired headphones on its own.
 
-### Tested on a WF-1000XM6 (FW 2.0.5) with `xmctl`
+## Known limitations
 
-| Setting | Write result |
-|---|---|
-| EQ preset (Heavy ↔ Clear) | ✅ applied |
-| EQ bands (switches to Custom automatically) | ✅ applied |
-| DSEE on/off | ✅ applied |
-| Speak-to-Chat on/off | ✅ applied |
-| Touch controls | ❌ the earbuds ACK the command but keep the old mapping (tried 3 actions). The app reports this rather than snapping back silently. |
-| Auto power-off | n/a: the device offers only "Never" |
-| Listening mode | n/a: the device offers only Standard |
+- **Touch controls on the WF-1000XM6** (firmware 2.0.5): the earbuds accept the command but keep their old
+  mapping. XMBar tells you when that happens. Use Sony's app to change them on this model.
+- **LDAC:** macOS streams Bluetooth audio as AAC, whatever app you use.
+- **Track info** appears only when the playing device sends it to the headphones.
+- XMBar needs an active Bluetooth connection to the headphones. Earbuds in their case, or connected only
+  to your phone, show as "not connected to this Mac". Use **Connect** in the panel to bring them over.
 
-```bash
-./scripts/bundle-app.sh
-```
+## Building from source
 
-```bash
-open build/XMBar.app
-```
-
-## Install a release
-
-Download the DMG from [Releases](https://github.com/Yossizz/sony-menu-bar-app/releases) and drag XMBar into
-Applications. The app is ad-hoc signed and **not notarized**, so macOS blocks it on first launch. To open it,
-right-click it and choose **Open**, or use **System Settings → Privacy & Security → Open Anyway**, or run
-`xattr -dr com.apple.quarantine /Applications/XMBar.app`.
-
-## CI and releases
-
-- `.github/workflows/build.yml` runs on every push to `main` and on every PR (macos-15). It builds libmdr,
-  caching it per submodule commit, builds both products, and uploads `XMBar.zip` as an artifact.
-- `.github/workflows/release.yml` runs when a `v*` tag is pushed. It stamps the version from the tag
-  (`v0.3.0` → 0.3.0, with the commit count as the build number), builds `XMBar-<ver>.dmg` and `.zip`, and
-  creates a GitHub Release with install notes.
-- Both share `.github/actions/build`. `scripts/make-dmg.sh` builds the DMG.
-
-To cut a release:
-
-```bash
-git tag v0.3.0 && git push origin v0.3.0
-```
-
-## Debugging
-
-- `XMBar --render-icons <dir>` writes the icon preview sheet as PNGs.
-- `XMBar --debug-hooks` logs device events and accepts distributed notifications that drive the same code
-  as the panel buttons, so UI behavior can be tested on real headphones without clicking:
-  `local.xm-menubar.debug.setMode` (`off`, `nc`, or `ambient`), `.playback` (`play`, `pause`, `next`, or
-  `previous`), and `.fakeBattery` (a percentage, or empty to clear it).
-
-## Layout
-
-| Path | What |
-|---|---|
-| `vendor/SonyHeadphonesClient` | git submodule, pinned to `ce2e54c`, the source of libmdr and libmdr-bt |
-| `scripts/build-libmdr.sh` | builds `libmdr.a`, `libmdr-bt.a`, and `libfmt.a` into `build/lib` with CMake |
-| `Sources/CMDR` | module map that exposes the libmdr C API (`mdr-c/*.h`) to Swift |
-| `Sources/XMKit` | Swift helpers over libmdr shared by both targets: the blocking `Session`, device list, settings readers and writers (`Settings.swift`), CoreAudio output (`AudioOutput.swift`) |
-| `Sources/xmctl` | the CLI |
-| `Sources/XMBar` | the menu bar app: `HeadphonesController` (a non-blocking libmdr event loop) and the SwiftUI views |
-| `scripts/bundle-app.sh` | builds `build/XMBar.app` and ad-hoc signs it |
-
-## Build
+Requirements: macOS 13+, the Xcode Command Line Tools (or Xcode), and CMake ≥ 3.31 plus Ninja.
 
 ```bash
 brew install cmake ninja
 ```
 
 ```bash
-git submodule update --init
+git clone --recursive https://github.com/Yossizz/sony-menu-bar-app.git && cd sony-menu-bar-app
 ```
+
+Build libmdr. This only needs to run once, or again after the submodule is updated:
 
 ```bash
 ./scripts/build-libmdr.sh
 ```
 
+Build and launch the app (this writes `build/XMBar.app`):
+
+```bash
+./scripts/bundle-app.sh && open build/XMBar.app
+```
+
+To build everything, including the `xmctl` command-line tool:
+
 ```bash
 swift build
 ```
 
-## Try it with your XM6
+If you cloned without `--recursive`, run `git submodule update --init` first.
 
-Pair the headphones in System Settings → Bluetooth first. The first run may ask for Bluetooth permission
-for the app you launch it from (Terminal, iTerm, …).
+## `xmctl` command-line tool
+
+`xmctl` uses the same code as the app, and is handy for scripting or checking a model. Find your headphones'
+address with `list`, then pass it to the other commands. Quit XMBar first, because only one app can hold the
+headphones' control connection at a time.
+
+| Command | What it does |
+|---|---|
+| `xmctl list` | Paired Bluetooth devices, and whether each is connected |
+| `xmctl status <MAC>` | Model, firmware, battery, noise control, EQ, all settings and features |
+| `xmctl anc <MAC> off\|nc\|ambient [--level N] [--voice]` | Set noise control |
+| `xmctl eq <MAC> <preset-id>` | Pick an EQ preset (`status` lists the ids) |
+| `xmctl eqbands <MAC> v1,v2,…` | Set every EQ band (switches to Custom) |
+| `xmctl dsee <MAC> on\|off` | DSEE upscaling |
+| `xmctl stc <MAC> on\|off` | Speak-to-Chat |
+| `xmctl control <MAC> <key> <action>` | Remap a touch control (`status` lists the ids) |
+| `xmctl autooff <MAC> <minutes>` | Auto power-off (0 = never) |
+| `xmctl output` | Which Mac sound output belongs to each connected headset |
+
+Options: `-v` for progress output, `--trace` to dump every Bluetooth frame as hex, and `--v1` / `--v2` to force a
+protocol version.
+
+## Development
+
+### Layout
+
+| Path | What |
+|---|---|
+| `vendor/SonyHeadphonesClient` | Git submodule with libmdr (the protocol) and libmdr-bt (Bluetooth transports) |
+| `scripts/build-libmdr.sh` | Builds `libmdr.a`, `libmdr-bt.a` and `libfmt.a` into `build/lib` with CMake |
+| `Sources/CMDR` | Module map that exposes libmdr's C API to Swift |
+| `Sources/XMKit` | Swift helpers shared by both targets: the blocking `Session`, settings and connectivity readers and writers, CoreAudio output |
+| `Sources/XMBar` | The app: `HeadphonesController` (a non-blocking libmdr event loop), the SwiftUI panel, the product icons |
+| `Sources/xmctl` | The command-line tool |
+| `scripts/bundle-app.sh` | Builds and ad-hoc signs `XMBar.app` (`VERSION=…` stamps a version) |
+| `scripts/make-dmg.sh` | Packages the app into a DMG |
+
+### How it works
+
+- Headphones expose a Bluetooth Classic RFCOMM service. XM5 and newer use protocol V2 (SDP UUID `956C7B26-…`),
+  and XM4 and older use V1 (`96CC203E-…`). XMBar tries V2, then V1.
+- libmdr's macOS backend runs all IOBluetooth work on the main queue. The app polls libmdr from a main-run-loop
+  timer, and `xmctl` pumps the run loop itself.
+- Writes are staged and then committed once the device is ready. The panel always shows libmdr's *desired*
+  value: your latest edit while it's in flight, and the device's own report once it settles.
+- **Bluetooth permission and the CLI:** macOS charges Bluetooth access to the app that launched a process.
+  `xmctl` re-launches itself as its own "responsible" process so that macOS uses `xmctl`'s embedded Info.plist
+  (see `Responsibility.swift`).
+- The macOS SDK implements SwiftUI's `@State` as a macro whose plugin doesn't ship with the Command Line Tools.
+  View state therefore lives on `ObservableObject`s or `@AppStorage` instead.
+
+### Debugging
+
+- `XMBar --render-icons <dir>` writes PNG previews of the icons.
+- `XMBar --debug-hooks` logs device events and accepts distributed notifications that run the same code as the
+  panel buttons, so you can test against real headphones from a script:
+  `local.xm-menubar.debug.setMode` (`off` / `nc` / `ambient`), `.playback` (`play` / `pause` / `next` /
+  `previous`), and `.fakeBattery` (a percentage, or empty to clear it).
+
+### CI and releases
+
+- **Build** (`.github/workflows/build.yml`): runs on every push to `main` and on every pull request. It builds on
+  macOS 15, caching libmdr by submodule commit, and uploads `XMBar.zip`.
+- **Release** (`.github/workflows/release.yml`): runs when you push a `v*` tag. It stamps the version from the
+  tag, builds the DMG and zip, and publishes a GitHub Release with install notes.
+
+To cut a release:
 
 ```bash
-.build/debug/xmctl list
+git tag -a v0.4.0 -m "XMBar 0.4.0" && git push origin v0.4.0
 ```
 
-```bash
-.build/debug/xmctl status AA:BB:CC:DD:EE:FF -v
-```
+## Credits
 
-```bash
-.build/debug/xmctl anc AA:BB:CC:DD:EE:FF ambient --level 10 --voice
-```
-
-Add `--trace` to dump every TX/RX frame as hex, which is useful for checking the protocol by hand.
-Use `--v2` or `--v1` to force a protocol instead of trying V2, then V1.
-
-## Notes
-
-- **Bluetooth permission (TCC):** macOS charges Bluetooth access to the *responsible* app, meaning whatever
-  launched the CLI. If that app has no Bluetooth usage string, the process is killed (`SIGABRT`, namespace
-  TCC). `xmctl` re-spawns itself with responsibility disclaimed, so macOS uses its own embedded Info.plist.
-  See `Responsibility.swift`. The menu bar `.app` won't need this.
-- **WF-1000XM6 (earbuds) vs WH-1000XM6 (over-ear):** libmdr lists the WF-1000XM6 EQ as partial (🔄), and
-  "pause when removed" as unsupported. See `vendor/SonyHeadphonesClient/docs/device-support/WF-1000XM6.md`.
-- The control channel needs an active Bluetooth link. Earbuds in their case, or connected only to a phone,
-  produce a "paired but not connected" error.
-
-- The macOS backend runs all IOBluetooth work on the main queue, so the CLI pumps the main run loop between
-  `mdrHeadphonesPoll` calls. See `pumpRunLoop` in `Session.swift`. The menu bar app will need the same
-  arrangement, or a dedicated thread with its own run loop.
-- The XM5 and XM6 advertise the V2 SDP service `956C7B26-…`; the XM4 and older advertise V1 `96CC203E-…`.
-- macOS sends Bluetooth audio as AAC, so LDAC is not available regardless of this app.
+Built on [SonyHeadphonesClient / libmdr](https://github.com/mos9527/SonyHeadphonesClient) by
+[@mos9527](https://github.com/mos9527), which continues [plutoberth's original project](https://github.com/plutoberth/SonyHeadphonesClient).
+Both are MIT-licensed. Thanks to everyone who reverse-engineered the protocol and reported devices there.
